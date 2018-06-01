@@ -9,9 +9,10 @@ import re
 import threading
 import subprocess
 import ConfigParser
+import copy
 from snack import *
-#from set_hostname_ssh_parms import load_c15000_config
-#from set-vizion-deploy-parms import generate_vizion_json
+from set_hostname_ssh_parms import load_c15000_config
+from set_vizion_deploy_parms import generate_vizion_json
 
 class ExtProgressWindow:
 
@@ -192,8 +193,8 @@ def validate_ip_format(ip):
     else:
         button = ExtAlert(
             screen,
-            "Error: IP Format",
-            "IP format error, please write correct IP!",
+            "Error",
+            "IP format error, please verify your IP!"
         )
         return False
 
@@ -203,8 +204,8 @@ def validate_ip_duplicate(ip, config_type):
     if ip in ips:
         button = ExtAlert(
             screen,
-            "Error: IP Duplicate",
-            "{} already exists, please write another IP!".format(ip),
+            "Error",
+            "IP duplicate error, {} already exists!".format(ip)
         )
         result = False
     return result
@@ -218,13 +219,79 @@ def validate_not_empty(host):
     if not result:
         button = ExtAlert(
             screen,
-            "Error: Content Empty",
-            "Exist empty info, please supply for each host info!",
+            "Error",
+            "Empty error, please supply for each host info!",
         )
     return result
 
-def validate_extra_config():
-    for host in Vizion_hosts:
+def get_host_empty_items(hosts):
+    empty_host = {}
+    for host in hosts:
+        ip = host["IP Address"]
+        items = []
+        for k, v in host.items():
+            if not v:
+                items.append(k)
+        if items:
+            empty_host[ip] = items
+
+    return empty_host
+
+def get_empty_data():
+    items = []
+    for k, v in Global_Config.items():
+        if not v:
+            items.append(k)
+
+    empty_data = {
+        "Basic Config": get_host_empty_items(Basic_Config),
+        "Additional Config": get_host_empty_items(Additional_Config),
+        "Global Config": items
+    }
+    return empty_data
+
+def check_if_exist_empty():
+    empty_data = get_empty_data()
+    exist_empty = False
+    for v in empty_data.values():
+        if v:
+            exist_empty = True
+            break
+    return exist_empty
+
+def get_empty_text():
+    empty_data = get_empty_data()
+    items = ""
+    for key in All_Config_Map.keys():
+        settings = empty_data[key]
+        if not settings:
+            continue
+        items += "\n\n" + key + ": "
+        if key == "Global Config":
+            items += "\n\t" + ", ".join(settings)
+            continue
+        for k, v in settings.items():
+            items += "\n\t" + k + ": " + ", ".join(v)
+
+    data = "Following info can not be empty!{}" \
+        .format(items)
+    return data
+
+def get_all_display_data():
+    items = "All configuration are displayed below. Are you sure to start deploy?\n"
+    for k, v in All_Config_Map.items():
+        items += "\n" + k + ": \n\t"
+        if k == "Global Config":
+            items +=  ", ".join(v.values()) + "\n"
+            continue
+        for host in v:
+            items += host["IP Address"] + ": "
+            for key, value in host.items():
+                if key != "IP Address":
+                    items += value + ", "
+            items = items[:-2] + "\n\t"
+
+    return items
 
 def get_format_data(data, config_type):
     if config_type == "basic":
@@ -258,7 +325,7 @@ def get_C15000_format_config():
         'Password': 'password'
     }
     data = {'ssh': {}}
-    for host in C15000_hosts:
+    for host in Basic_Config:
         data['ssh'][host['IP Address']] = {}
         for k, v in host.items():
             data['ssh'][host['IP Address']][key_map[k]] = v
@@ -274,12 +341,12 @@ def get_Vizion_format_config():
         'IP Range': 'ip_range'
     }
     data = []
-    for host in Vizion_hosts:
+    for host in Additional_Config:
         item = {}
-        for k, v in Extra_global_settings.items():
+        for k, v in Global_Config.items():
             item[key_map[k]] = v
         for k, v in host.items():
-            if k == "Devices":
+            if k == "Devices" and v != '':
                 devices = v.split(',')
                 for device in devices:
                     key = 'device' + str(devices.index(device) + 1)
@@ -292,11 +359,11 @@ def get_Vizion_format_config():
 
 def start_deploy():
     load_c15000_config(
-        deploy_type="console", get_C15000_format_config()
+        deploy_type="console", data=get_C15000_format_config()
     )
 
     generate_vizion_json(
-        deploy_type="console", get_Vizion_format_config()
+        deploy_type="console", data=get_Vizion_format_config()
     )
 
     do_shell("bash {}".format(DEPLOY_SCRIPT_FILE))
@@ -321,24 +388,24 @@ def do_shell(cmd):
 
 def get_ips(config_type):
     if config_type == "basic":
-        hosts = C15000_hosts
+        hosts = Basic_Config
     elif config_type == "extra":
-        hosts = Vizion_hosts
+        hosts = Additional_Config
     ips = [host['IP Address'] for host in hosts]
     return ips
 
 def C15000_window(current, data=None):
-    buttons = [ 'Save', 'Cancel', 'Exit']
+    buttons = [ 'save', 'cancel', 'exit']
     if not data:
         data = ['IP Address:', 'Hostname:', 'Password:']
         if current != 'add':
-            data = get_format_data(C15000_hosts[current], 'basic')
+            data = get_format_data(Basic_Config[current], 'basic')
             buttons.insert(1, 'Delete')
 
     host = ExtEntryWindow(
         screen,
-        'C15000 Config',
-        'C15000 Config',
+        '{} host'.format('Add' if current == 'add' else 'Edit'),
+        'Please fill storage host info.',
         data,
         width = 40,
         entryWidth = 40,
@@ -346,6 +413,7 @@ def C15000_window(current, data=None):
     )
 
     if host[1] == "exit":
+        screen.finish()
         return
     elif host[1] == "save":
         new_host = {
@@ -368,9 +436,9 @@ def C15000_window(current, data=None):
                 return C15000_window(
                     current, get_format_data(new_host, 'basic')
                 )
-            C15000_hosts.append(new_host)
+            Basic_Config.append(new_host)
         else:
-            C15000_hosts[current] = new_host
+            Basic_Config[current] = new_host
     elif host[1] == "delete":
         button = ExtButtonChoiceWindow(
             screen,
@@ -378,10 +446,10 @@ def C15000_window(current, data=None):
             'Are you sure to delete current host?'
         )
         if button == "ok":
-            del(C15000_hosts[current])
+            del(Basic_Config[current])
         else:
             C15000_window(current)
-    C15000_hosts_list()
+    Basic_Config_list()
 
 def Vizion_window(current, data=None):
     buttons = [ 'Save', 'Cancel', "Exit"]
@@ -393,12 +461,12 @@ def Vizion_window(current, data=None):
             'Devices:'
         ]
         if current != 'add':
-            data = get_format_data(Vizion_hosts[current], 'extra')
+            data = get_format_data(Additional_Config[current], 'extra')
             buttons.insert(1, 'Delete')
     host = ExtEntryWindow(
         screen,
-        'Vizion Config',
-        'Vizion Config',
+        '{} host'.format('Add' if current == 'add' else 'Edit'),
+        'Please fill search host info.',
         data,
         width = 40,
         entryWidth = 40,
@@ -406,6 +474,7 @@ def Vizion_window(current, data=None):
     )
 
     if host[1] == "exit":
+        screen.finish()
         return
     elif host[1] == "save":
         new_host = {
@@ -429,9 +498,9 @@ def Vizion_window(current, data=None):
                 return Vizion_window(
                     current, get_format_data(new_host, 'extra')
                 )
-            Vizion_hosts.append(new_host)
+            Additional_Config.append(new_host)
         else:
-            Vizion_hosts[current] = new_host
+            Additional_Config[current] = new_host
     elif host[1] == "delete":
         button = ExtButtonChoiceWindow(
             screen,
@@ -439,14 +508,14 @@ def Vizion_window(current, data=None):
             'Are you sure to delete current host?'
         )
         if button == "ok":
-            del(Vizion_hosts[current])
+            del(Additional_Config[current])
         else:
             Vizion_window(current)
-    Vizion_hosts_list()
+    Additional_Config_list()
 
 def Progress_window():
-    #a = threading.Thread(target = start_deploy)
-    #a.start()
+    a = threading.Thread(target = start_deploy)
+    a.start()
     progress = ExtProgressWindow(
         screen,
         "CG20 Deploy",
@@ -480,6 +549,7 @@ def Deploy_result_window(info):
         "\n".join(info)
     )
     if button == "ok":
+        screen.finish()
         return
 
 def Import_C15000_settings():
@@ -487,13 +557,14 @@ def Import_C15000_settings():
     success = []
     fail = []
     ips = get_ips('extra')
-    for host in C15000_hosts:
+    for host in Basic_Config:
         if host['IP Address'] in ips:
             fail.append(host['IP Address'])
         else:
             success.append(host['IP Address'])
-            host['Devices'] = ''
-            Vizion_hosts.append(host)
+            new_host = copy.copy(host)
+            new_host['Devices'] = ''
+            Additional_Config.append(new_host)
 
     info = "Import successfully:{}".format(
         "\n\t" + "\n\t".join(success))
@@ -508,36 +579,47 @@ def Import_C15000_settings():
         info
     )
     if button == "ok":
-        Vizion_hosts_list()
+        Additional_Config_list()
 
 def Global_settings_window():
-    data = get_format_data(Extra_global_settings, 'extra_global')
+    data = get_format_data(Global_Config, 'extra_global')
     ret, button, settings = ExtEntryWindow(
         screen,
-        'Extra Global Settings',
-        'Extar global settings, such as ntpserver, ip range etc',
+        'Global Config',
+        'Ntpserver format is the same as ip. IP Range format is like x.x.x.x-x, such as "192.168.1.1-5"',
         data,
-        width = 80,
-        entryWidth = 80,
-        buttons = [ 'Save', 'Cancel', 'Exit']
+        buttons = [ 'save', 'cancel', 'exit'],
+        width = 60,
     )
 
     if button == "exit":
+        screen.finish()
         return
     if button == "save":
-        Extra_global_settings['Ntpserver'] = settings[0]
-        Extra_global_settings['IP Range'] = settings[1]
-    Vizion_hosts_list()
+        Global_Config['Ntpserver'] = settings[0]
+        Global_Config['IP Range'] = settings[1]
+    Additional_Config_list()
 
-def C15000_hosts_list():
+def Welcome_deploy_window():
+    title = "Welcome Page"
+    msg = "Welcome to CG20 deploy. The CG20 is a distributed storage system with a distributed search engine."
+    buttons = ['next', 'exit']
+    button = ExtButtonChoiceWindow(screen, title, msg, buttons)
+    if button == "next":
+        Basic_Config_list()
+    elif button == "exit":
+        screen.finish()
+        return
+
+def Basic_Config_list():
     ips = [('Add new host', 'add')]
-    for host in C15000_hosts:
-        ips.append((host['IP Address'], C15000_hosts.index(host)))
+    for host in Basic_Config:
+        ips.append((host['IP Address'], Basic_Config.index(host)))
 
     ret, button, lb = ExtListboxChoiceWindow(
         screen,
-        'Basic Config',
-        "Basic hosts list",
+        'Distribute Storage Config',
+        'Distribute Storage Config',
         ips,
         buttons=("prev", "next", "exit"),
         width=50,
@@ -545,21 +627,24 @@ def C15000_hosts_list():
     )
 
     if button == "exit":
+        screen.finish()
         return
+    elif button == "prev":
+        Welcome_deploy_window()
     elif button == "next":
-        Vizion_hosts_list()
+        Additional_Config_list()
     elif lb is not None:
         C15000_window(lb)
 
-def Vizion_hosts_list():
+def Additional_Config_list():
     ips = [('Add new host', 'add')]
-    for host in Vizion_hosts:
-        ips.append((host['IP Address'], Vizion_hosts.index(host)))
+    for host in Additional_Config:
+        ips.append((host['IP Address'], Additional_Config.index(host)))
 
     ret, button, lb = ExtListboxChoiceWindow(
         screen,
-        'Extra Config',
-        "Extra config hosts",
+        'Distribute Search Config',
+        'Distribute Search Config',
         ips,
         buttons=("prev", "next", "import", "global settings", "exit"),
         width=50,
@@ -567,19 +652,37 @@ def Vizion_hosts_list():
     )
 
     if button == "exit":
-        return
+        screen.finish()
+        return ''
     elif button == "prev":
-        C15000_hosts_list()
+        Basic_Config_list()
     elif button == "next":
-        button = ExtButtonChoiceWindow(
-            screen,
-            'Start Install',
-            'Are you sure to start install?'
-        )
-        if button == "ok":
-            Progress_window()
-        elif button == "cancel":
-            Vizion_hosts_list()
+        if not Basic_Config or not Additional_Config:
+            button = ExtAlert(
+                screen,
+                'Error',
+                "Storage and search config can not be empty!"
+            )
+            if button == "ok":
+                Additional_Config_list()
+        if check_if_exist_empty():
+            button = ExtAlert(
+                screen,
+                'Error',
+                get_empty_text(),
+                width = 60
+            )
+            if button == "ok":
+                Additional_Config_list()
+        else:
+            text = get_all_display_data()
+            button = ExtButtonChoiceWindow(
+                screen, 'Confirm', text, width=80
+            )
+            if button == "ok":
+                Progress_window()
+            elif button == "cancel":
+                Additional_Config_list()
     elif button == "import":
         Import_C15000_settings()
     elif button == "global settings":
@@ -589,7 +692,7 @@ def Vizion_hosts_list():
 
 def main():
     try:
-        C15000_hosts_list()
+        Welcome_deploy_window()
     except:
         print traceback.format_exc()
     finally:
@@ -600,14 +703,18 @@ def log(content):
     with open("tt.log", 'a+') as f:
         f.write(str(content) + "\n")
 
-DEPLOY_CONFIG_FILE = "config.ini"
 DEPLOY_SCRIPT_FILE = "/home/cg20/install.sh"
-#DEPLOY_CONFIG_FILE = "/opt/cg20_deploy_config.ini"
-C15000_hosts = []
-Vizion_hosts = []
-Extra_global_settings = {
+DEPLOY_CONFIG_FILE = "/opt/cg20_deploy_config.ini"
+Basic_Config = []
+Additional_Config = []
+Global_Config = {
     'Ntpserver': '',
     'IP Range': ''
+}
+All_Config_Map = {
+    'Basic Config': Basic_Config,
+    'Additional Config': Additional_Config,
+    'Global Config': Global_Config
 }
 screen = SnackScreen()
 main()
