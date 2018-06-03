@@ -1,6 +1,6 @@
 #! /usr/bin/python
 #encoding=utf-8
-__author__ = 'hui.yin@uniswdc.com'
+__author__ = 'Tony Yin'
 
 import sys
 import traceback
@@ -10,59 +10,60 @@ import threading
 import subprocess
 import ConfigParser
 import copy
+from deploy_tasks import *
 from snack import *
-from set_hostname_ssh_parms import load_c15000_config
-from set_vizion_deploy_parms import generate_vizion_json
+from datetime import datetime
+from widget_extlib import *
 
-class ExtProgressWindow:
 
-    def __init__(self, screen, title, text):
-        self.screen = screen
-        self.g = GridForm(self.screen, title, 1, 2)
-        self.s = Scale(70, 100)
-        self.t = Textbox(70, 5, text)
-        self.g.add(self.t, 0, 0)
-        self.g.add(self.s, 0, 1)
+DEPLOY_CONFIG_FILE = "config.ini"
+DEPLOY_CONFIG_FILE_BAK = "config.ini.bak"
+BASIC_TYPE = 0
+ADDITIONAL_TYPE = 1
+GLOBAL_TYPE = 2
+Basic_Config = []
+Additional_Config = []
+Global_Config = {
+    'Ntpserver': '',
+    'IP Range': ''
+}
+All_Config_Map = {
+    'Basic Config': Basic_Config,
+    'Additional Config': Additional_Config,
+    'Global Config': Global_Config
+}
+screen = SnackScreen()
 
-    def show(self):
-        self.g.draw()
-        self.screen.refresh()
 
-    def update(self, progress, text):
-        self.s.set(progress)
-        self.t.setText(text)
-        self.g.draw()
-        self.screen.refresh()
-
-    def close(self):
-        time.sleep(1)
-        self.screen.popWindow()
-
-class Install_progress:
+class Deploy_Progress:
 
     def __init__(self):
         self.config_file = DEPLOY_CONFIG_FILE
         self.config_read = ConfigParser.RawConfigParser()
         self.config_read.read(self.config_file)
         self.sections = self.config_read.sections()
-        self.lastest_section = self.sections[-1]
+
 
     def get_progress_value(self):
+        if not self.sections:
+            return 0
         progress_value = self.config_read.get(
-            self.lastest_section,
+            self.sections[-1],
             'deploy_percentage'
         )
         return int(progress_value[:-1])
 
+
     def get_current_job_name(self):
         current_job = None
         progress_value = self.get_progress_value()
-        if progress_value != 100:
+        if self.sections and progress_value != 100:
             current_job = self.config_read.get(
-                self.lastest_section,
+                self.sections[-1],
                 'next_deploy_phase'
             )
         return current_job
+
 
     def get_deploy_info(self):
         info = []
@@ -74,117 +75,8 @@ class Install_progress:
         current_job = self.get_current_job_name()
         if current_job:
             info.append("{}: {}".format(current_job, 'running'))
-
         return info
 
-def ExtListboxChoiceWindow(screen, title, text, items,
-                buttons = ('Ok', 'Cancel'),
-                width = 40, scroll = 0, height = -1,
-                default = None, help = None):
-
-    if (height == -1): height = len(items)
-
-    bb = ButtonBar(screen, buttons, compact=1)
-    t = TextboxReflowed(width, text)
-    l = Listbox(height, scroll = scroll, returnExit = 1)
-    count = 0
-    for item in items:
-        if (type(item) == types.TupleType):
-            (text, key) = item
-        else:
-            text = item
-            key = count
-
-        if (default == count):
-            default = key
-        elif (default == item):
-            default = key
-
-        l.append(text, key)
-        count = count + 1
-
-    if (default != None):
-        l.setCurrent (default)
-
-    g = GridFormHelp(screen, title, help, 1, 3)
-    g.add(t, 0, 0)
-    g.add(l, 0, 1, padding = (0, 1, 0, 1))
-    g.add(bb, 0, 2, growx = 1)
-
-    rc = g.runOnce()
-
-    return (rc, bb.buttonPressed(rc), l.current())
-
-def ExtAlert(screen, title, msg, width=70):
-    return ExtButtonChoiceWindow(screen, title, msg, ["Ok"], width)
-
-def ExtButtonChoiceWindow(screen, title, text,
-                buttons = [ 'Ok', 'Cancel' ],
-                width = 40, x = None, y = None, help = None):
-
-    bb = ButtonBar(screen, buttons, compact=1)
-    t = TextboxReflowed(width, text, maxHeight = screen.height - 12)
-
-    g = GridFormHelp(screen, title, help, 1, 2)
-    g.add(t, 0, 0, padding = (0, 0, 0, 1))
-    g.add(bb, 0, 1, growx = 1)
-    return bb.buttonPressed(g.runOnce(x, y))
-
-def ExtEntryWindow(screen, title, text, prompts,
-            allowCancel = 1, width = 40, entryWidth = 20,
-            buttons = [ 'Ok', 'Cancel' ], help = None):
-
-    bb = ButtonBar(screen, buttons, compact=1);
-    t = TextboxReflowed(width, text)
-
-    count = 0
-    for n in prompts:
-        count = count + 1
-
-    sg = Grid(2, count)
-
-    count = 0
-    entryList = []
-    for n in prompts:
-        if (type(n) == types.TupleType):
-            (n, e) = n
-            if (type(e) in types.StringTypes):
-                e = Entry(entryWidth, e)
-        else:
-            e = Entry(entryWidth)
-
-        sg.setField(Label(n), 0, count, padding = (0, 0, 1, 0), anchorLeft = 1)
-        sg.setField(e, 1, count, anchorLeft = 1)
-        count = count + 1
-        entryList.append(e)
-
-    g = GridFormHelp(screen, title, help, 1, 3)
-
-    g.add(t, 0, 0, padding = (0, 0, 0, 1))
-    g.add(sg, 0, 1, padding = (0, 0, 0, 1))
-    g.add(bb, 0, 2, growx = 1)
-
-    result = g.runOnce()
-
-    entryValues = []
-    count = 0
-    for n in prompts:
-        entryValues.append(entryList[count].value())
-        count = count + 1
-
-    return (result, bb.buttonPressed(result), tuple(entryValues))
-
-def ExtButtonChoiceWindow(screen, title, text,
-                buttons = [ 'Ok', 'Cancel' ],
-                width = 40, x = None, y = None, help = None):
-
-    bb = ButtonBar(screen, buttons, compact=1)
-    t = TextboxReflowed(width, text, maxHeight = screen.height - 12)
-
-    g = GridFormHelp(screen, title, help, 1, 2)
-    g.add(t, 0, 0, padding = (0, 0, 0, 1))
-    g.add(bb, 0, 1, growx = 1)
-    return bb.buttonPressed(g.runOnce(x, y))
 
 def validate_ip_format(ip):
     p = re.compile('^((25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(25[0-5]|2[0-4]\d|[01]?\d\d?)$')
@@ -198,6 +90,7 @@ def validate_ip_format(ip):
         )
         return False
 
+
 def validate_ip_duplicate(ip, config_type):
     result = True
     ips = get_ips(config_type)
@@ -209,6 +102,7 @@ def validate_ip_duplicate(ip, config_type):
         )
         result = False
     return result
+
 
 def validate_not_empty(host):
     result = True
@@ -224,6 +118,7 @@ def validate_not_empty(host):
         )
     return result
 
+
 def get_host_empty_items(hosts):
     empty_host = {}
     for host in hosts:
@@ -236,6 +131,7 @@ def get_host_empty_items(hosts):
             empty_host[ip] = items
 
     return empty_host
+
 
 def get_empty_data():
     items = []
@@ -250,6 +146,7 @@ def get_empty_data():
     }
     return empty_data
 
+
 def check_if_exist_empty():
     empty_data = get_empty_data()
     exist_empty = False
@@ -258,6 +155,7 @@ def check_if_exist_empty():
             exist_empty = True
             break
     return exist_empty
+
 
 def get_empty_text():
     empty_data = get_empty_data()
@@ -277,6 +175,7 @@ def get_empty_text():
         .format(items)
     return data
 
+
 def get_all_display_data():
     items = "All configuration are displayed below. Are you sure to start deploy?\n"
     for k, v in All_Config_Map.items():
@@ -292,6 +191,7 @@ def get_all_display_data():
             items = items[:-2] + "\n\t"
 
     return items
+
 
 def get_format_data(data, config_type):
     if config_type == BASIC_TYPE:
@@ -318,6 +218,7 @@ def get_format_data(data, config_type):
         format_data.append((s + ":", data[s]))
     return format_data
 
+
 def get_basic_format_config():
     key_map = {
         'IP Address': 'ipaddr',
@@ -331,6 +232,7 @@ def get_basic_format_config():
             data['ssh'][host['IP Address']][key_map[k]] = v
 
     return data
+
 
 def get_additional_format_config():
     key_map = {
@@ -357,16 +259,10 @@ def get_additional_format_config():
 
     return data
 
+
 def start_deploy():
-    load_c15000_config(
-        deploy_type="console", data=get_basic_format_config()
-    )
+    deploy_tasks()
 
-    generate_vizion_json(
-        deploy_type="console", data=get_additional_format_config()
-    )
-
-    do_shell("bash {}".format(DEPLOY_SCRIPT_FILE))
 
 def do_shell(cmd):
     p = subprocess.Popen(
@@ -394,6 +290,7 @@ def get_ips(config_type):
     ips = [host['IP Address'] for host in hosts]
     return ips
 
+
 def Basic_Host_Window(current, data=None):
     buttons = [ 'save', 'cancel', 'exit']
     if not data:
@@ -405,7 +302,7 @@ def Basic_Host_Window(current, data=None):
     host = ExtEntryWindow(
         screen,
         '{} host'.format('Add' if current == 'add' else 'Edit'),
-        'Please fill storage host info.',
+        'Please fill config host info.',
         data,
         width = 40,
         entryWidth = 40,
@@ -451,6 +348,7 @@ def Basic_Host_Window(current, data=None):
             Basic_Host_Window(current)
     Basic_Config_Window()
 
+
 def Additional_Host_Window(current, data=None):
     buttons = [ 'Save', 'Cancel', "Exit"]
     if not data:
@@ -466,7 +364,7 @@ def Additional_Host_Window(current, data=None):
     host = ExtEntryWindow(
         screen,
         '{} host'.format('Add' if current == 'add' else 'Edit'),
-        'Please fill search host info.',
+        'Please fill additional host info.',
         data,
         width = 40,
         entryWidth = 40,
@@ -514,34 +412,41 @@ def Additional_Host_Window(current, data=None):
             Additional_Host_Window(current)
     Additional_Config_Window()
 
+
 def Deploy_Progress_Window():
     a = threading.Thread(target = start_deploy)
     a.start()
     progress = ExtProgressWindow(
         screen,
-        "CG20 Deploy",
-        "Start deploy CG20 ..."
+        "Deploy",
+        "Start deploy ..."
     )
     progress.show()
+    start_time = time.time()
+    start_format_time = time.strftime('%Y-%m-%d %H:%M:%S',
+        time.localtime(start_time))
     last_progress_value = ""
     while True:
-        install_info = Install_progress()
-        progress_value = install_info.get_progress_value()
-        detail_info = install_info.get_deploy_info()
-        if progress_value != last_progress_value:
-            progress.update(
-                progress_value, "\n".join(detail_info) + "\n\n"
-            )
+        deploy_info = Deploy_Progress()
+        progress_value = deploy_info.get_progress_value()
+        time_info = get_time_info_text(start_time,
+            start_format_time)
+        detail_info = deploy_info.get_deploy_info()
+        progress.update(
+            progress_value,
+            time_info + "\n".join(detail_info) + "\n\n"
+        )
         last_progress_value = progress_value
         state = ""
         for phase in detail_info:
             state = phase.split(':')[1].strip()
             if state == "failed":
                 break
-        if progress_value == "100" or state == "failed":
+        if progress_value == 100 or state == "failed":
             break
     progress.close()
     Deploy_Result_Window(detail_info)
+
 
 def Deploy_Result_Window(info):
     button = ExtAlert(
@@ -552,6 +457,7 @@ def Deploy_Result_Window(info):
     if button == "ok":
         screen.finish()
         return
+
 
 def Import_Basic_Config_Window():
     info_level = 'Info'
@@ -582,6 +488,7 @@ def Import_Basic_Config_Window():
     if button == "ok":
         Additional_Config_Window()
 
+
 def Global_Config_Window():
     data = get_format_data(Global_Config, GLOBAL_TYPE)
     ret, button, settings = ExtEntryWindow(
@@ -601,9 +508,10 @@ def Global_Config_Window():
         Global_Config['IP Range'] = settings[1]
     Additional_Config_Window()
 
+
 def Welcome_Deploy_Window():
     title = "Welcome Page"
-    msg = "Welcome to CG20 deploy. The CG20 is a distributed storage system with a distributed search engine."
+    msg = "Welcome to deploy console."
     buttons = ['next', 'exit']
     button = ExtButtonChoiceWindow(screen, title, msg, buttons)
     if button == "next":
@@ -612,6 +520,7 @@ def Welcome_Deploy_Window():
         screen.finish()
         return
 
+
 def Basic_Config_Window():
     ips = [('Add new host', 'add')]
     for host in Basic_Config:
@@ -619,8 +528,8 @@ def Basic_Config_Window():
 
     ret, button, lb = ExtListboxChoiceWindow(
         screen,
-        'Distribute Storage Config',
-        'Distribute Storage Config',
+        'Basic Config',
+        'Basic Config',
         ips,
         buttons=("prev", "next", "exit"),
         width=50,
@@ -637,6 +546,7 @@ def Basic_Config_Window():
     elif lb is not None:
         Basic_Host_Window(lb)
 
+
 def Additional_Config_Window():
     ips = [('Add new host', 'add')]
     for host in Additional_Config:
@@ -644,8 +554,8 @@ def Additional_Config_Window():
 
     ret, button, lb = ExtListboxChoiceWindow(
         screen,
-        'Distribute Search Config',
-        'Distribute Search Config',
+        'Additional Config',
+        'Additional Config',
         ips,
         buttons=("prev", "next", "import", "global settings", "exit"),
         width=50,
@@ -662,7 +572,7 @@ def Additional_Config_Window():
             button = ExtAlert(
                 screen,
                 'Error',
-                "Storage and search config can not be empty!"
+                "Basic and Additional config can not be empty!"
             )
             if button == "ok":
                 Additional_Config_Window()
@@ -691,6 +601,7 @@ def Additional_Config_Window():
     elif lb is not None:
         Additional_Host_Window(lb)
 
+
 def main():
     try:
         Welcome_Deploy_Window()
@@ -700,25 +611,40 @@ def main():
         screen.finish()
         return ''
 
+
 def log(content):
     with open("tt.log", 'a+') as f:
         f.write(str(content) + "\n")
 
-DEPLOY_SCRIPT_FILE = "/home/cg20/install.sh"
-DEPLOY_CONFIG_FILE = "/opt/cg20_deploy_config.ini"
-BASIC_TYPE = 0
-ADDITIONAL_TYPE = 1
-GLOBAL_TYPE = 2
-Basic_Config = []
-Additional_Config = []
-Global_Config = {
-    'Ntpserver': '',
-    'IP Range': ''
-}
-All_Config_Map = {
-    'Basic Config': Basic_Config,
-    'Additional Config': Additional_Config,
-    'Global Config': Global_Config
-}
-screen = SnackScreen()
+
+def get_time_info_text(start_time, start_format_time):
+    interval = get_time_interval(start_time)
+    time_info_text = "Start: {}".format(
+        str(start_format_time)) + "Running: {}\n\n".format(
+        interval).rjust(40)
+    return time_info_text
+
+
+def get_time_interval(start_time):
+    start_time = datetime.fromtimestamp(start_time)
+    now_time = datetime.fromtimestamp(time.time())
+    interval = (now_time - start_time).seconds
+    format_interval = get_format_interval(interval)
+    return format_interval
+
+
+def get_format_interval(interval):
+    if interval < 60:
+        format_interval = "{}s".format(str(interval))
+    elif 60 <= interval < 60*60:
+        format_interval = "{}min {}s".format(
+            str(interval/60), str(interval%60))
+    elif 60*60 <= interval <= 60*60*24:
+        format_interval = "{}h {}min {}s".format(
+            str(interval/(60*60)),
+            str(interval%(60*60)/60),
+            str(interval%(60*60)%60)
+        )
+    return format_interval
+
 main()

@@ -177,7 +177,7 @@ class ExtProgressWindow:
         self.screen = screen
         self.g = GridForm(self.screen, title, 1, 2)
         self.s = Scale(70, 100)
-        self.t = Textbox(70, 5, text)
+        self.t = Textbox(70, 8, text)
         self.g.add(self.t, 0, 0)
         self.g.add(self.s, 0, 1)
 
@@ -192,7 +192,7 @@ class ExtProgressWindow:
         self.screen.refresh()
 
     def close(self):
-        self.update(100)
+        #self.update(100)
         time.sleep(1)
         self.screen.popWindow()
 
