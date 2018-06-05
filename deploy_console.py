@@ -17,7 +17,6 @@ from widget_extlib import *
 
 
 DEPLOY_CONFIG_FILE = "config.ini"
-DEPLOY_CONFIG_FILE_BAK = "config.ini.bak"
 BASIC_TYPE = 0
 ADDITIONAL_TYPE = 1
 GLOBAL_TYPE = 2
@@ -425,7 +424,6 @@ def Deploy_Progress_Window():
     start_time = time.time()
     start_format_time = time.strftime('%Y-%m-%d %H:%M:%S',
         time.localtime(start_time))
-    last_progress_value = ""
     while True:
         deploy_info = Deploy_Progress()
         progress_value = deploy_info.get_progress_value()
@@ -436,7 +434,6 @@ def Deploy_Progress_Window():
             progress_value,
             time_info + "\n".join(detail_info) + "\n\n"
         )
-        last_progress_value = progress_value
         state = ""
         for phase in detail_info:
             state = phase.split(':')[1].strip()
@@ -602,16 +599,6 @@ def Additional_Config_Window():
         Additional_Host_Window(lb)
 
 
-def main():
-    try:
-        Welcome_Deploy_Window()
-    except:
-        print traceback.format_exc()
-    finally:
-        screen.finish()
-        return ''
-
-
 def log(content):
     with open("tt.log", 'a+') as f:
         f.write(str(content) + "\n")
@@ -639,12 +626,26 @@ def get_format_interval(interval):
     elif 60 <= interval < 60*60:
         format_interval = "{}min {}s".format(
             str(interval/60), str(interval%60))
-    elif 60*60 <= interval <= 60*60*24:
+    elif 60*60 <= interval < 60*60*24:
         format_interval = "{}h {}min {}s".format(
             str(interval/(60*60)),
             str(interval%(60*60)/60),
             str(interval%(60*60)%60)
         )
+    elif 60*60*24 <= interval:
+        format_interval = "{}d {}h {}min {}s".format(
+            str(interval/(60*60*24)),
+            str(interval%(60*60*24)/60*60),
+            str(interval%(60*60)/60),
+            str(interval%(60*60)%60)
+        )
     return format_interval
 
-main()
+
+if __name__=="__main__":
+    try:
+        Welcome_Deploy_Window()
+    except:
+        print traceback.format_exc()
+    finally:
+        screen.finish()
