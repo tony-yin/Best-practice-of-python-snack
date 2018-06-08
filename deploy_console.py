@@ -41,13 +41,44 @@ class Deploy_Progress:
         self.config_read = ConfigParser.RawConfigParser()
         self.config_read.read(self.config_file)
         self.sections = self.config_read.sections()
+        self.deploy_sections = []
+        self.lastest_section = None
+        self.deploy_options = [
+            'deploy_type',
+            'deploy_next',
+            'deploy_percentage',
+            'deploy_result'
+        ]
+
+        for section in self.sections:
+            if "deploy_phase" in section:
+                self.deploy_sections.append(section)
+
+        if self.deploy_sections:
+            self.lastest_section = self.deploy_sections[-1]
+            for option in self.deploy_options:
+                if not self.config_read.has_option(
+                        self.lastest_section, option):
+                    if option == "deploy_next" and \
+                            self.config_read.has_option(
+                                self.lastest_section,
+                                "deploy_percentage"
+                            ):
+                        if self.get_progress_value() == 100:
+                            continue
+
+                    if len(self.deploy_sections) > 1:
+                        self.lastest_section = self.deploy_sections[-2]
+                    else:
+                        self.lastest_section = None
+                    break
 
 
     def get_progress_value(self):
-        if not self.sections:
+        if not self.lastest_section:
             return 0
         progress_value = self.config_read.get(
-            self.sections[-1],
+            self.lastest_section,
             'deploy_percentage'
         )
         return int(progress_value[:-1])
@@ -56,17 +87,23 @@ class Deploy_Progress:
     def get_current_job_name(self):
         current_job = None
         progress_value = self.get_progress_value()
-        if self.sections and progress_value != 100:
+        if self.lastest_section and progress_value != 100:
             current_job = self.config_read.get(
-                self.sections[-1],
-                'next_deploy_phase'
+                self.lastest_section,
+                'deploy_next'
             )
         return current_job
 
 
     def get_deploy_info(self):
         info = []
-        for section in self.sections:
+        if not self.lastest_section:
+            return info
+
+        lastest_index = self.deploy_sections.index(
+            self.lastest_section)
+        for i in range(lastest_index + 1):
+            section = self.deploy_sections[i]
             name = self.config_read.get(section, 'deploy_type')
             ret = self.config_read.get(section, 'deploy_result')
             info.append("{}: {}".format(name, ret))
@@ -77,16 +114,16 @@ class Deploy_Progress:
         return info
 
 
-def validate_ip_format(ip):
-    p = re.compile('^((25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(25[0-5]|2[0-4]\d|[01]?\d\d?)$')
+def validate_ip_format(ip, item):
+    regex = '^((25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(25[0-5]|' + \
+        '2[0-4]\d|[01]?\d\d?)$'
+    p = re.compile(regex)
     if p.match(ip):
         return True
     else:
-        button = ExtAlert(
-            screen,
-            "Error",
-            "IP format error, please verify your IP!"
-        )
+        msg = "{} format error, please verify your {}!".format(
+            item, item)
+        ExtAlert(screen, "Error", msg)
         return False
 
 
@@ -94,29 +131,52 @@ def validate_ip_duplicate(ip, config_type):
     result = True
     ips = get_ips(config_type)
     if ip in ips:
-        button = ExtAlert(
-            screen,
-            "Error",
-            "IP duplicate error, {} already exists!".format(ip)
-        )
+        msg = "IP duplicate error, {} already exists!".format(ip)
+        ExtAlert(screen, "Error", msg)
         result = False
     return result
 
 
-def validate_not_empty(host):
+def validate_not_empty(items):
     result = True
-    for item in host:
+    for item in items:
         if not item:
             result = False
             break
     if not result:
-        button = ExtAlert(
-            screen,
-            "Error",
-            "Empty error, please supply for each host info!",
-        )
+        msg = "Empty error, each info can not be empty!"
+        ExtAlert(screen, "Error", msg)
     return result
 
+
+def validate_hostname_format(hostname):
+    p = re.compile("^([a-z]+)([a-z0-9]*)$")
+    if p.match(hostname):
+        return True
+    else:
+        msg = "Hostname format error, hostname consists of " + \
+            "lowercase or digit. Lowercase is necessary and " + \
+            "beginning of hostname can not be digit!"
+        ExtAlert(screen, "Error", msg)
+        return False
+
+
+def validate_device_info(devices):
+    p = re.compile("^([a-z]+[0-9]*)\/([0-9]+)\/((ssd)$|(hdd)$)")
+    msg = "Devices consists of multi device and separte with " + \
+        "','. Each device format is like [name]/[size]/[type]," \
+        + " such as 'sda/20/hdd' or 'sdb/30/hdd'. name consists" \
+        + " lowercase and digit, size should be digit, and type" \
+        + " should be hdd or ssd."
+
+    result = True
+    for device in devices.split(','):
+        if not p.match(device.strip()):
+            result = False
+            ExtAlert(screen, "Error", msg)
+            break
+
+    return result
 
 def get_host_empty_items(hosts):
     empty_host = {}
@@ -176,7 +236,8 @@ def get_empty_text():
 
 
 def get_all_display_data():
-    items = "All configuration are displayed below. Are you sure to start deploy?\n"
+    items = "All configuration are displayed below. " + \
+        "Are you sure to start deploy?\n"
     for k, v in All_Config_Map.items():
         items += "\n" + k + ": \n\t"
         if k == "Global Config":
@@ -251,7 +312,7 @@ def get_additional_format_config():
                 devices = v.split(',')
                 for device in devices:
                     key = 'device' + str(devices.index(device) + 1)
-                    item[key] = device
+                    item[key] = device.strip()
             else:
                 item[key_map[k]] = v
         data.append(item)
@@ -260,7 +321,10 @@ def get_additional_format_config():
 
 
 def start_deploy():
-    deploy_tasks()
+    try:
+        do_shell('python start_deploy.py > /dev/null 2>&1')
+    except:
+        log(traceback.format_exc())
 
 
 def do_shell(cmd):
@@ -317,12 +381,10 @@ def Basic_Host_Window(current, data=None):
             'Hostname': host[2][1],
             'Password': host[2][2]
         }
-        if not validate_ip_format(host[2][0]):
-            return Basic_Host_Window(
-                current, get_format_data(new_host, BASIC_TYPE)
-            )
-
-        if not validate_not_empty(host[2]):
+        name = "IP Address"
+        if not validate_not_empty(host[2]) or \
+                not validate_ip_format(host[2][0], name) or \
+                not validate_hostname_format(host[2][1]):
             return Basic_Host_Window(
                 current, get_format_data(new_host, BASIC_TYPE)
             )
@@ -358,8 +420,11 @@ def Additional_Host_Window(current, data=None):
             'Devices:'
         ]
         if current != 'add':
-            data = get_format_data(Additional_Config[current], ADDITIONAL_TYPE)
+            data = get_format_data(
+                Additional_Config[current], ADDITIONAL_TYPE
+            )
             buttons.insert(1, 'Delete')
+
     host = ExtEntryWindow(
         screen,
         '{} host'.format('Add' if current == 'add' else 'Edit'),
@@ -380,21 +445,21 @@ def Additional_Host_Window(current, data=None):
             'Password': host[2][2],
             'Devices': host[2][3],
         }
-        if not validate_ip_format(host[2][0]):
+        name = "IP Address"
+        if not validate_not_empty(host[2]) or \
+                not validate_ip_format(host[2][0], name) or \
+                not validate_hostname_format(host[2][1]) or \
+                not validate_device_info(host[2][3]):
             return Additional_Host_Window(
-                current, get_format_data(new_host, ADDITIONAL_TYPE)
-            )
-
-        if not validate_not_empty(host[2]):
-            return Additional_Host_Window(
-                current, get_format_data(new_host, ADDITIONAL_TYPE)
+                current,
+                get_format_data(new_host, ADDITIONAL_TYPE)
             )
 
         if current == "add":
             if not validate_ip_duplicate(host[2][0], ADDITIONAL_TYPE):
                 return Additional_Host_Window(
-                    current, get_format_data(
-                        new_host, ADDITIONAL_TYPE)
+                    current,
+                    get_format_data(new_host, ADDITIONAL_TYPE)
                 )
             Additional_Config.append(new_host)
         else:
@@ -486,23 +551,36 @@ def Import_Basic_Config_Window():
         Additional_Config_Window()
 
 
-def Global_Config_Window():
-    data = get_format_data(Global_Config, GLOBAL_TYPE)
-    ret, button, settings = ExtEntryWindow(
+def Global_Config_Window(data=None):
+    if not data:
+        data = get_format_data(Global_Config, GLOBAL_TYPE)
+
+    msg = "Ntpserver format is the same as ip. IP Range " + \
+        "format is like x.x.x.x-x, such as '192.168.1.1-5'"
+    ret, button, config = ExtEntryWindow(
         screen,
         'Global Config',
-        'Ntpserver format is the same as ip. IP Range format is like x.x.x.x-x, such as "192.168.1.1-5"',
+        msg,
         data,
         buttons = [ 'save', 'cancel', 'exit'],
-        width = 60,
+        width = 60
     )
 
     if button == "exit":
         screen.finish()
         return
     if button == "save":
-        Global_Config['Ntpserver'] = settings[0]
-        Global_Config['IP Range'] = settings[1]
+        new_config = {
+            'Ntpserver': config[0],
+            'IP Range': config[1]
+        }
+        if not validate_not_empty(new_config.values()) or \
+                not validate_ip_format(config[0], "Ntpserver"):
+            return Global_Config_Window(
+                get_format_data(new_config, GLOBAL_TYPE)
+            )
+        Global_Config['Ntpserver'] = config[0]
+        Global_Config['IP Range'] = config[1]
     Additional_Config_Window()
 
 
@@ -600,7 +678,7 @@ def Additional_Config_Window():
 
 
 def log(content):
-    with open("tt.log", 'a+') as f:
+    with open("console.log", 'a+') as f:
         f.write(str(content) + "\n")
 
 
@@ -642,10 +720,11 @@ def get_format_interval(interval):
     return format_interval
 
 
-if __name__=="__main__":
+if __name__ == "__main__":
     try:
         Welcome_Deploy_Window()
     except:
-        print traceback.format_exc()
+        log(traceback.format_exc())
     finally:
+        log(do_shell("cat {}".format(DEPLOY_CONFIG_FILE)))
         screen.finish()
