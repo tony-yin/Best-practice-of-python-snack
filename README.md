@@ -31,5 +31,5 @@ cd Best-practice-of-python-snack
 
 Just see [Best Practice of python snack][2]
 
-[1]: http://ow0mgad6r.bkt.clouddn.com/deploy_console.gif
-[2]: http://www.tony-yin.top/2018/06/03/Python-Snack-Best-Practice/
+[1]: http://cdn.tony-yin.site/deploy_console.gif
+[2]: http://www.tony-yin.site/2018/06/03/Python-Snack-Best-Practice/
